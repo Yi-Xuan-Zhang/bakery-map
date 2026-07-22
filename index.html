@@ -1,20 +1,474 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-Hant">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
-    <link rel="stylesheet" href="index.css">
-    <title>teasshop</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>口袋麵包地圖・麵包店收藏展示館</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@500;600;700;900&family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<!-- Vue -->
+<script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+<!-- TopoJSON -->
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
+<!-- D3 Geo -->
+<script src="https://cdn.jsdelivr.net/npm/d3-geo@3"></script>
+<style>
+html { scroll-behavior: smooth; }
+body { background-color: #F1EAD9; background-image:
+    radial-gradient(circle at 1px 1px, rgba(74,59,42,0.06) 1px, transparent 0);
+  background-size: 22px 22px; }
+.postcard { position: relative; }
+.postcard::before {
+  content: '';
+  position: absolute; inset: 6px;
+  border: 1.5px dashed rgba(74,59,42,0.25);
+  border-radius: 0.5rem;
+  pointer-events: none;
+  z-index: 5;
+}
+.stamp { transform: rotate(5deg); box-shadow: 0 2px 4px rgba(0,0,0,0.15); }
+.postmark { font-family: 'Noto Serif TC', serif; letter-spacing: 0.05em; }
+.county-path {
+  cursor: pointer;
+  transition: fill 0.25s ease, stroke 0.15s ease, filter 0.2s ease;
+  stroke: #F1EAD9;
+  stroke-width: 1.2;
+}
+.county-path:hover { filter: brightness(1.08); stroke: #B5592E; stroke-width: 2; }
+.fade-enter-active, .fade-leave-active { transition: all 0.2s ease; }
+.fade-enter-from, .fade-leave-to { opacity: 0; transform: translateY(-6px); }
+.modal-enter-active, .modal-leave-active { transition: opacity 0.25s ease; }
+.modal-enter-from, .modal-leave-to { opacity: 0; }
+.modal-enter-active .modal-panel, .modal-leave-active .modal-panel { transition: transform 0.25s ease, opacity 0.25s ease; }
+.modal-enter-from .modal-panel, .modal-leave-to .modal-panel { transform: translateY(16px) scale(0.98); opacity: 0; }
+::-webkit-scrollbar { height: 8px; width: 8px; }
+::-webkit-scrollbar-thumb { background: #C9BBA1; border-radius: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+[v-cloak] { display: none; }
+/
+</style>
 </head>
-<body>
-    <nav>
-        <div class="logo">teasshop</div>
-        <div class="nav-links">
-            <li><a href="">Bestsellers</a></li>
-            <li><a href="">Blog</a></li>
-            <li><a href="">About</a></li>
-            <li><a href="">Visit us</a></li>
-    </nav>
+<body class="font-sans text-ink antialiased">
+    
+    <div id="app" v-cloak>
+  <!-- Header -->
+  <header class="relative overflow-hidden border-b-2 border-tan/60">
+    <div class="max-w-6xl mx-auto px-5 md:px-8 py-10 md:py-14 flex flex-col md:flex-row md:items-end md:justify-between gap-6">
+      <div>
+        <p class="font-serif tracking-[0.3em] text-rust text-xs md:text-sm mb-2">BAKERY PASSPORT・麵包踩點護照</p>
+        <h1 class="font-serif font-black text-4xl md:text-5xl text-ink leading-tight">口袋麵包地圖</h1>
+        <p class="mt-3 text-ink2 text-sm md:text-base max-w-md">我的全台麵包店收藏展示館。</p>
+      </div>
+      <div class="flex items-center gap-4">
+        <div class="postmark border-2 border-dashed border-rust/50 rounded-full w-24 h-24 md:w-28 md:h-28 flex flex-col items-center justify-center text-center bg-card/70 shrink-0">
+          <span class="text-2xl md:text-3xl font-serif font-black text-rust">{{ totalCount }}</span>
+          <span class="text-[10px] md:text-xs text-ink2 tracking-widest">已收藏店家</span>
+        </div>
+        <button @click="openAddModal" class="shrink-0 bg-rust hover:bg-rustdark text-paper font-medium px-5 py-3 rounded-full shadow-postcard transition-colors flex items-center gap-2">
+          <span class="text-lg leading-none">＋</span>
+          <span>新增收藏</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main -->
+  <main class="max-w-6xl mx-auto px-5 md:px-8 py-8 md:py-10 grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-8">
+
+    <!-- Sidebar: 地圖 -->
+    <aside class="lg:sticky lg:top-8 lg:self-start space-y-4">
+      <div class="bg-card rounded-2xl shadow-postcard p-5 border border-tan/50">
+        <div class="flex items-center justify-between mb-1">
+          <h2 class="font-serif font-bold text-lg text-ink">台灣踩點地圖</h2>
+          <button v-if="selectedRegion" @click="selectedRegion = null" class="text-xs text-rust hover:underline">清除篩選 ✕</button>
+        </div>
+        <p class="text-xs text-ink2 mb-3">點擊縣市查看已收藏的店家，顏色越深代表收藏越多</p>
+
+        <svg :viewBox="'0 0 ' + TAIWAN_MAP.width + ' ' + (TAIWAN_MAP.height + 60)" class="w-full h-auto select-none">
+          <g v-for="feat in mainFeatures" :key="feat.name">
+            <path
+              :d="feat.path"
+              class="county-path"
+              :fill="countyFill(feat.name)"
+              :stroke="selectedRegion === feat.name ? '#8C4322' : '#F1EAD9'"
+              :stroke-width="selectedRegion === feat.name ? 2.5 : 1.2"
+              @click="selectCounty(feat.name)"
+              @mouseenter="hoveredCounty = feat.name"
+              @mouseleave="hoveredCounty = null"
+            >
+              <title>{{ feat.name }}（{{ countyCounts[feat.name] || 0 }} 間）</title>
+            </path>
+          </g>
+
+          <!-- 外島（金門/連江）示意插圖 -->
+          <g :transform="'translate(14,' + (TAIWAN_MAP.height - 20) + ')'">
+            <rect x="-8" y="-84" width="70" height="100" rx="6" fill="none" stroke="#C9BBA1" stroke-width="1" stroke-dasharray="3,3"/>
+            <text x="27" y="-70" text-anchor="middle" class="postmark" font-size="9" fill="#6B5943">外島（示意）</text>
+            <g v-for="feat in insetFeatures" :key="feat.name" :transform="feat.name === '金門縣' ? 'translate(5,-58)' : 'translate(5,-15)'">
+              <path
+                :d="feat.path"
+                class="county-path"
+                :fill="countyFill(feat.name)"
+                :stroke="selectedRegion === feat.name ? '#8C4322' : '#F1EAD9'"
+                :stroke-width="selectedRegion === feat.name ? 2.5 : 1"
+                @click="selectCounty(feat.name)"
+                @mouseenter="hoveredCounty = feat.name"
+                @mouseleave="hoveredCounty = null"
+              >
+                <title>{{ feat.name }}（{{ countyCounts[feat.name] || 0 }} 間）</title>
+              </path>
+            </g>
+          </g>
+        </svg>
+
+        <div class="mt-2 h-5 text-xs text-ink2 text-center">
+          <span v-if="hoveredCounty">{{ hoveredCounty }}・{{ countyCounts[hoveredCounty] || 0 }} 間收藏</span>
+          <span v-else-if="selectedRegion" class="text-rust font-medium">已篩選：{{ selectedRegion }}</span>
+          <span v-else>&nbsp;</span>
+        </div>
+
+        <div class="flex items-center justify-center gap-2 mt-2 text-[10px] text-ink2">
+          <span>尚未收藏</span>
+          <span class="inline-block w-3 h-3 rounded-sm" style="background:#E7DCC4"></span>
+          <span class="inline-block w-3 h-3 rounded-sm" style="background:#E3AE7C"></span>
+          <span class="inline-block w-3 h-3 rounded-sm" style="background:#C97847"></span>
+          <span class="inline-block w-3 h-3 rounded-sm" style="background:#8C4322"></span>
+          <span>收藏最多</span>
+        </div>
+      </div>
+
+      <!-- 快速依地區篩選 chips -->
+      <div class="bg-card rounded-2xl shadow-postcard p-4 border border-tan/50">
+        <h3 class="text-xs font-medium text-ink2 mb-2">快速依地區篩選</h3>
+        <div class="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto pr-1">
+          <button
+            v-for="county in countyOrder" :key="county"
+            @click="selectCounty(county)"
+            :class="['text-xs px-2.5 py-1 rounded-full border transition-colors',
+              selectedRegion === county ? 'bg-rust text-paper border-rust' : 'bg-paper/60 border-tan/60 text-ink2 hover:border-rust/60']"
+          >{{ county }}<span class="opacity-60">（{{ countyCounts[county] || 0 }}）</span></button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 內容：篩選 + 卡片 -->
+    <section>
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
+       <div class="flex flex-wrap gap-2">
+  <button
+    v-for="t in allTypes" :key="t"
+    @click="selectedType = t"
+    :class="[
+      'text-sm px-4 py-1.5 rounded-full border font-medium cursor-pointer transition-all duration-200 ease-out select-none',
+      selectedType === t 
+        ? 'bg-sage text-paper border-sage shadow-md scale-105 font-bold' 
+        : 'bg-card border-tan/70 text-ink2 hover:border-sage hover:text-ink hover:bg-paper hover:-translate-y-0.5 hover:shadow-sm'
+    ]"
+  >
+    {{ t }}</button>
+</div>
+        <p class="text-sm text-ink2 shrink-0">顯示 <span class="text-rust font-semibold">{{ filteredItems.length }}</span> / {{ totalCount }} 筆</p>
+      </div>
+
+      <div v-if="filteredItems.length === 0" class="bg-card/70 border-2 border-dashed border-tan rounded-2xl py-20 px-6 text-center">
+        <p class="text-4xl mb-3">🥐</p>
+        <p class="text-ink2 font-medium">目前尚未有收藏項目，趕快去踩點吧!</p>
+      </div>
+
+      <transition-group v-else tag="div" name="fade" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
+        <article v-for="item in filteredItems" :key="item.id" class="postcard bg-card rounded-2xl shadow-postcard overflow-hidden border border-tan/40 flex flex-col">
+          <div class="relative aspect-[4/3] bg-gradient-to-br from-tan/40 to-wheat/25 overflow-hidden">
+            <img v-if="item.imageUrl" :src="item.imageUrl" :alt="item.name" class="w-full h-full object-cover" @error="onImgError">
+            <div v-else class="w-full h-full flex items-center justify-center text-5xl">🍞</div>
+            <div class="postmark absolute top-2 left-2 z-10 bg-card/90 border border-dashed border-ink/40 rounded-full w-14 h-14 flex items-center justify-center text-center leading-tight px-1">
+              <span class="text-[10px] text-ink2">{{ item.region.replace('市','').replace('縣','') }}</span>
+            </div>
+            <div class="stamp absolute top-2 right-2 z-10 bg-card border border-wheat/70 rounded px-1.5 py-1 text-wheat text-xs tracking-tighter">
+              {{ starString(item.rating) }}
+            </div>
+          </div>
+
+          <div class="p-4 flex flex-col flex-1 relative z-10">
+            <h3 class="font-serif font-bold text-lg text-ink leading-snug">{{ item.name }}</h3>
+            <div class="flex flex-wrap gap-1.5 mt-2 mb-2">
+              <span class="text-[11px] bg-sage/15 text-sagedark px-2 py-0.5 rounded-full border border-sage/30">{{ item.type }}</span>
+              <span class="text-[11px] bg-rust/10 text-rustdark px-2 py-0.5 rounded-full border border-rust/25">{{ item.region }}</span>
+            </div>
+
+            <button @click="toggleExpand(item.id)" class="text-xs text-rust hover:text-rustdark self-start flex items-center gap-1 mt-1">
+              <span>{{ expanded[item.id] ? '隱藏介紹' : '查看介紹' }}</span>
+              <span :class="['transition-transform inline-block', expanded[item.id] ? 'rotate-180' : '']">▾</span>
+            </button>
+            <p v-if="expanded[item.id]" class="text-sm text-ink2 mt-2 leading-relaxed border-t border-dashed border-tan pt-2">
+              {{ item.description || '（尚未填寫介紹）' }}
+            </p>
+
+            <div class="mt-auto pt-3 flex items-center justify-between">
+              <a v-if="item.mapUrl" :href="item.mapUrl" target="_blank" rel="noopener noreferrer"
+                 class="text-xs inline-flex items-center gap-1 text-ink2 hover:text-rust border border-tan/60 hover:border-rust/60 rounded-full px-3 py-1.5 transition-colors">
+                <span>📍</span><span>Google 地圖</span>
+              </a>
+              <span v-else class="text-xs text-ink2/50">尚無地圖連結</span>
+              <button @click="removeItem(item.id)" class="text-xs text-ink2/50 hover:text-rust transition-colors">刪除</button>
+            </div>
+          </div>
+        </article>
+      </transition-group>
+    </section>
+  </main>
+
+  <footer class="max-w-6xl mx-auto px-5 md:px-8 pb-10 pt-4 text-center text-xs text-ink2/70">
+    手工紀錄・持續更新中 — 每一格麵包香都值得被收藏
+  </footer>
+
+  <!-- 新增收藏 Modal -->
+  <transition name="modal">
+    <div v-if="showModal" class="fixed inset-0 bg-ink/40 backdrop-blur-sm z-50 flex items-center justify-center p-4" @click.self="closeModal">
+      <div class="modal-panel bg-paper w-full max-w-lg rounded-2xl shadow-postcard border border-tan/50 max-h-[90vh] overflow-y-auto">
+        <div class="p-6">
+          <div class="flex items-center justify-between mb-5">
+            <h2 class="font-serif font-bold text-xl text-ink">新增收藏</h2>
+            <button @click="closeModal" class="text-ink2 hover:text-rust text-xl leading-none">✕</button>
+          </div>
+
+          <form @submit.prevent="submitForm" class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-ink2 mb-1">店家名稱 <span class="text-rust">*</span></label>
+              <input v-model.trim="form.name" type="text" required placeholder="例：田心製麵包所"
+                class="w-full bg-card border border-tan rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rust/40 focus:border-rust">
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm font-medium text-ink2 mb-1">分類（類型）</label>
+                <select v-model="form.type" class="w-full bg-card border border-tan rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rust/40">
+                  <option v-for="t in typeOptions" :key="t" :value="t">{{ t }}</option>
+                  <option value="__custom__">其他（自行輸入）</option>
+                </select>
+                <input v-if="form.type === '__custom__'" v-model.trim="form.customType" type="text" placeholder="輸入自訂分類"
+                  class="w-full mt-2 bg-card border border-tan rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rust/40">
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-ink2 mb-1">地區 <span class="text-rust">*</span></label>
+                <select v-model="form.region" required class="w-full bg-card border border-tan rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rust/40">
+                  <option v-for="c in countyOrder" :key="c" :value="c">{{ c }}</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-ink2 mb-1">喜好度</label>
+              <div class="flex gap-1 text-2xl">
+                <button type="button" v-for="n in 5" :key="n" @click="form.rating = n"
+                  class="transition-transform hover:scale-110" :class="n <= form.rating ? 'text-wheat' : 'text-tan'">★</button>
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-ink2 mb-1">圖片網址</label>
+              <input v-model.trim="form.imageUrl" type="url" placeholder="https://..."
+                class="w-full bg-card border border-tan rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rust/40">
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-ink2 mb-1">Google Map 連結</label>
+              <input v-model.trim="form.mapUrl" type="url" placeholder="https://maps.google.com/..."
+                class="w-full bg-card border border-tan rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rust/40">
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-ink2 mb-1">簡短介紹</label>
+              <textarea v-model.trim="form.description" rows="3" placeholder="這間店最迷人的地方是..."
+                class="w-full bg-card border border-tan rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rust/40"></textarea>
+            </div>
+
+            <p v-if="formError" class="text-xs text-rust">{{ formError }}</p>
+
+            <div class="flex justify-end gap-3 pt-2">
+              <button type="button" @click="closeModal" class="px-4 py-2 text-sm text-ink2 hover:text-ink transition-colors">取消</button>
+              <button type="submit" class="px-5 py-2 text-sm bg-rust hover:bg-rustdark text-paper rounded-full font-medium shadow-postcard transition-colors">新增收藏</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </transition>
+
+</div>
+<script>
+const COUNTY_ORDER = [
+  '基隆市','臺北市','新北市','桃園市','新竹市','新竹縣','苗栗縣',
+  '臺中市','彰化縣','南投縣','雲林縣','嘉義市','嘉義縣','臺南市',
+  '高雄市','屏東縣','宜蘭縣','花蓮縣','臺東縣','澎湖縣','金門縣','連江縣'
+];
+
+const SEED_ITEMS = [
+  { id: 1, name: '小麥過敏烘焙工作室', type: '歐包', region: '臺中市', rating: 3,
+    imageUrl: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSPRd4-EKrALyUcPqIqTP7_Fv4DG80tJN6k7q4B3IYk3A&s=10',
+    mapUrl: 'https://maps.app.goo.gl/X9iPv16FbaaTFxyH9',
+    description: '主打純素、天然發酵歐式麵包。' },
+  { id: 2, name: 'Celebread', type: '酸種', region: '臺北市', rating: 5,
+    imageUrl: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQvqqFG0X0pe_7pxp_uhBgqVysdr_T5mUDM3Z7SeDHe1g&s',
+    mapUrl: 'https://maps.app.goo.gl/vPAiC4jNNVGttjcE8',
+    description: '臺北大安熱門酸種麵包店，先後在天母及新竹竹北展店。' },
+  { id: 3, name: 'Bagel Expresso 貝果咖啡', type: '貝果', region: '臺中市', rating: 4,
+    imageUrl: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTWvIVTS-fRdeJm6w03xU-LzACiZw2UtR-MR-JgToLOpg&s', 
+    mapUrl: 'https://maps.app.goo.gl/TG2wK84C5S7bYVdr9', 
+    description: '外皮酥脆內裡Q彈的各式抹醬貝果。' },
+  { id: 4, name: '點點烘焙製造所', type: '鹼水', region: '彰化縣', rating: 3,
+    imageUrl: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSW1ZMWncljot9am6z6O9EHfHWKPhYos4pl0Z8f2CQ1Vw&s=10', 
+    mapUrl: 'https://maps.app.goo.gl/wmWzvJg5R79vQm3x5',
+    description: '巷弄間的手作烘焙坊，鹼水麵包香氣十足。'},
+  { id: 5, name: '包子M老麵手工饅頭', type: '饅頭', region: '臺北市', rating: 5,
+    imageUrl: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcT6k50kbGHLQMAQf2FsvfqHUOJAtZXjzWJ1IXgVD2vxZA&s=10',
+    mapUrl: 'https://maps.app.goo.gl/yW2yThZXv1iqHzXv8',
+    description: '堅持傳統老麵發酵，口感紮實有嚼勁。' },
+];
+
+const app = Vue.createApp({
+  data() {
+    return {
+      TAIWAN_MAP: {
+        width: 600,
+        height: 827.8,
+        features: []
+      },
+      mapReady: false,
+      items: SEED_ITEMS,
+      typeOptions: ['歐包', '貝果', '酸種', '饅頭', '鹼水', '司康'],
+      countyOrder: COUNTY_ORDER,
+      selectedType: '全部',
+      selectedRegion: null,
+      hoveredCounty: null,
+      expanded: {},
+      showModal: false,
+      formError: '',
+      nextId: 6,
+      form: this.blankForm()
+    };
+  },
+  computed: {
+    mainFeatures() { return this.TAIWAN_MAP.features.filter(f => !f.inset); },
+    insetFeatures() { return this.TAIWAN_MAP.features.filter(f => f.inset); },
+    allTypes() {
+      const extra = [...new Set(this.items.map(i => i.type))].filter(t => !this.typeOptions.includes(t));
+      return ['全部', ...this.typeOptions, ...extra];
+    },
+    countyCounts() {
+      const counts = {};
+      this.items.forEach(i => { counts[i.region] = (counts[i.region] || 0) + 1; });
+      return counts;
+    },
+    maxCount() {
+      const vals = Object.values(this.countyCounts);
+      return vals.length ? Math.max(...vals) : 1;
+    },
+    totalCount() { return this.items.length; },
+    filteredItems() {
+      return this.items.filter(i =>
+        (this.selectedType === '全部' || i.type === this.selectedType) &&
+        (!this.selectedRegion || i.region === this.selectedRegion)
+      );
+    },
+  },
+  methods: {
+    blankForm() {
+      // 修正：預設 region 改為 '臺北市' 保持正體字一致
+      return { name: '', type: '歐包', customType: '', region: '臺北市', rating: 3, imageUrl: '', mapUrl: '', description: '' };
+    },
+    countyFill(name) {
+      const count = this.countyCounts[name] || 0;
+      if (count === 0) return '#E7DCC4';
+      const t = Math.min(1, count / this.maxCount);
+      return this.lerpColor('#E3AE7C', '#8C4322', t);
+    },
+    lerpColor(a, b, t) {
+      const pa = this.hexToRgb(a), pb = this.hexToRgb(b);
+      const r = Math.round(pa.r + (pb.r - pa.r) * t);
+      const g = Math.round(pa.g + (pb.g - pa.g) * t);
+      const bl = Math.round(pa.b + (pb.b - pa.b) * t);
+      return `rgb(${r},${g},${bl})`;
+    },
+    hexToRgb(hex) {
+      const n = parseInt(hex.slice(1), 16);
+      return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+    },
+    selectCounty(name) { this.selectedRegion = this.selectedRegion === name ? null : name; },
+    toggleExpand(id) { this.expanded[id] = !this.expanded[id]; },
+    starString(rating) { return '★'.repeat(rating) + '☆'.repeat(5 - rating); },
+    onImgError(e) { e.target.style.display = 'none'; },
+    openAddModal() { this.form = this.blankForm(); this.formError = ''; this.showModal = true; },
+    closeModal() { this.showModal = false; },
+    submitForm() {
+      const name = this.form.name.trim();
+      if (!name) { this.formError = '請輸入店家名稱'; return; }
+      let type = this.form.type;
+      if (type === '__custom__') {
+        type = this.form.customType.trim();
+        if (!type) { this.formError = '請輸入自訂分類名稱'; return; }
+      }
+      const newItem = {
+        id: this.nextId++, name, type,
+        region: this.form.region, rating: this.form.rating,
+        imageUrl: this.form.imageUrl.trim(), mapUrl: this.form.mapUrl.trim(),
+        description: this.form.description.trim(),
+      };
+      this.items.push(newItem);
+      this.showModal = false;
+    },
+    removeItem(id) {
+      this.items = this.items.filter(i => i.id !== id);
+      delete this.expanded[id];
+    },
+    async loadTaiwanMap() {
+        try {
+    // 改用 GitHub / CDN 上公開的台灣地圖資料
+    const response = await fetch('https://cdn.jsdelivr.net/npm/taiwan-atlas/counties-10t.json');
+
+    if (!response.ok) throw new Error('地圖資料載入失敗');
+
+    const topoData = await response.json();
+    const objectName = Object.keys(topoData.objects)[0];
+    const geoJson = topojson.feature(topoData, topoData.objects[objectName]);
+
+    // 篩選本島進行投影
+    const mainLandFeatures = geoJson.features.filter(f => {
+      const name = f.properties?.COUNTYNAME || f.properties?.NAME || '';
+      return !['金門縣', '連江縣'].includes(name);
+    });
+
+    const projection = d3.geoMercator()
+      .fitSize([600, 827.8], { type: 'FeatureCollection', features: mainLandFeatures });
+
+    const pathGenerator = d3.geoPath().projection(projection);
+
+    this.TAIWAN_MAP.features = geoJson.features.map((feature, index) => {
+      const name = feature.properties?.COUNTYNAME ||
+                   feature.properties?.NAME ||
+                   feature.properties?.COUNTYENG ||
+                   `縣市${index + 1}`;
+
+      return {
+        name,
+        path: pathGenerator(feature),
+        inset: ['金門縣', '連江縣'].includes(name)
+      };
+    });
+
+    this.mapReady = true;
+  } catch (error) {
+    console.error('Taiwan Map 載入錯誤:', error);
+  }
+}
+  },
+  mounted() {
+    this.loadTaiwanMap();
+  }
+});
+
+app.mount('#app');
+</script>
 </body>
 </html>
